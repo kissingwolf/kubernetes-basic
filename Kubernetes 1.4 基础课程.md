@@ -884,6 +884,8 @@ To further debug and diagnose cluster problems, use 'kubectl cluster-info dump'.
 
 kubectl命令的子命令和操作参数比较多，在使用kubectl操作Kubernetes环境之前，我们先罗列出其常用的子命令和操作参数。
 
+kubectl 常用子命令列表：
+
 | 命令             | 说明                                     |
 | -------------- | -------------------------------------- |
 | get            | 显示资源信息                                 |
@@ -907,6 +909,30 @@ kubectl命令的子命令和操作参数比较多，在使用kubectl操作Kubern
 | api-versions   | 显示API版本信息                              |
 | version        | 打印kubectl和API Server版本信息               |
 | help           | 帮助命令                                   |
+
+kubectl 常用可操作资源对象列表：
+
+| 资源对象名称                   | 缩写     |
+| :----------------------- | :----- |
+| deployments              | de     |
+| endpoints                | ep     |
+| horizontalpodautoscalers | hpa    |
+| ingresses                | ing    |
+| limitranges              | limits |
+| nodes                    | no     |
+| namespaces               | ns     |
+| pods                     | po     |
+| persistentvolumes        | pv     |
+| persistentvolumecails    | pvc    |
+| resourcequotas           | quota  |
+| replicationcontrollers   | rc     |
+| services                 | svc    |
+| deployments              | null   |
+| jobs                     | null   |
+| secrets                  | null   |
+| serviceaccounts          | null   |
+
+kubectl 常用命令行公共参数：
 
 | 参数                                  | 说明                                       |
 | ----------------------------------- | ---------------------------------------- |
@@ -966,7 +992,7 @@ metadata:
 spec:
   containers:
   - name: nginx
-    image: nginx:1.7.9
+    image: nginx:latest
     ports:
     - containerPort: 80
 ```
@@ -974,7 +1000,7 @@ spec:
 将文件保存为nginx-pod.yaml，后面我们将使用”kubectl create“命令来创建nginx Pod。文件中的标签我们后面具体介绍。
 
 ```shell
-查看配置文件内容
+# 查看配置文件内容
 [root@master0 ~]# cat nginx-pod.yaml
 apiVersion: v1
 kind: Pod
@@ -987,16 +1013,16 @@ spec:
     ports:
     - containerPort: 80
     
-创建Pod nginx
+# 创建Pod nginx
 [root@master0 ~]# kubectl create -f nginx-pod.yaml
 pod "nginx" created
 
-查看Pod 状态和信息
+# 查看Pod 状态和信息
 [root@master0 ~]# kubectl get pod
 NAME      READY     STATUS    RESTARTS   AGE
 nginx     1/1       Running   0          31s
 
-查看Pod nginx的详细信息
+# 查看Pod nginx的详细信息
 [root@master0 ~]# kubectl describe pod nginx
 Name:		nginx
 Namespace:	default
@@ -1112,6 +1138,16 @@ Waiting for pod default/busybox to terminate, status is Running
 pod "busybox" deleted
 ```
 
+Pod的状态包括以下几种：
+
+| 状态        | 说明                                    |
+| --------- | ------------------------------------- |
+| Pending   | 已经创建该Pod，但Pod中还有若干容器没有完成运行，可能正在下载容器镜像 |
+| Running   | Pod中所有容器已经运行，包括容器启动状态或重启状态            |
+| Succeeded | Pod中所有容器成功退出，且不会继续重启                  |
+| Failed    | Pod中所有容器已经退出，但容器为失败状态，可能由于无法下载容器镜像    |
+| Unknown   | 由于某种原因无法获取Pod状态，可能由于Master和Node网络通信不畅 |
+
 #### 设置Pod Label
 
 同样的步骤我们可以创建更多的Pod，但如何去区分Pod呢？ 我们使用之前的讲过的概念—Label。
@@ -1225,6 +1261,186 @@ pod "nginx" labeled
 ```shell
 [root@master0 ~]# kubectl label  pod nginx app-
 pod "nginx" labeled
+```
+
+#### 创建多容器Pod
+
+在同一个Pod中，我们可以创建多个相互关联的容器，在容器之间可以通过Volume共享数据。
+
+接下来的例子中，我们将使用到nginx:latest和busybox:latest两个镜像，并建立一个emptyDir类型的Volume，用以共享存储。
+
+首先我们要创建一个多容器Pod配置文件：
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: multicontainer-pod
+spec:
+  containers:
+  - name: nginx
+    image: nginx:latest
+    imagePullPolicy: IfNotPresent
+    ports:
+    - containerPort: 80
+    volumeMounts: # spec.volumeMounts[] 设置挂接卷
+    - name: htmlroot # spec.volumeMounts[].name 挂接卷名称，由spec.volumes[].name定义
+      mountPath: /usr/share/nginx/html # 挂接到容器路径
+  - name: busybox
+    image: busybox:latest
+    imagePullPolicy: IfNotPresent
+    command: ["sh","-c","while : ; do sleep 10 ; done"] # 容器执行命令
+    volumeMounts:
+    - name: htmlroot
+      mountPath: /mnt
+  volumes: # spec.volumes[] 定义卷类型
+  - name: htmlroot # spec.volumes[].name 定义卷名称，容器挂接卷时引用
+    emptyDir: {} # 卷类型
+```
+
+将多容器Pod配置文件保存为multicontainer_pod.yaml ，在Master上使用kubectl创建：
+
+```shell
+[root@master0 ~]# kubectl create -f multicontainer_pod.yaml
+pod "multicontainer-pod" created
+```
+
+等待pod被创建成功后，我们可以查看当前多容器Pod的状态：
+
+```shell
+[root@master0 ~]# kubectl get pod multicontainer-pod
+NAME                 READY     STATUS    RESTARTS   AGE
+multicontainer-pod   2/2       Running   0          1m
+[root@master0 ~]# kubectl describe pod multicontainer-pod
+Name:		multicontainer-pod
+Namespace:	default
+Node:		nodea0.example.com/172.25.0.11
+Start Time:	Tue, 22 Nov 2016 16:26:16 +0800
+Labels:		<none>
+Status:		Running
+IP:		10.40.0.1
+Controllers:	<none>
+Containers:
+  nginx:
+    Container ID:	docker://4ee4004da7e92b15da43af86947a6a4d649207c5e9d95f0a1ffe88e9a0655306
+    Image:		nginx:latest
+    Image ID:		docker://sha256:05a60462f8bafb215ddc5c20a364b5fb637670200a74a5bb13a1b23f64515561
+    Port:		80/TCP
+    State:		Running
+      Started:		Tue, 22 Nov 2016 16:26:27 +0800
+    Ready:		True
+    Restart Count:	0
+    Volume Mounts:
+      /usr/share/nginx/html from htmlroot (rw)
+      /var/run/secrets/kubernetes.io/serviceaccount from default-token-k5azo (ro)
+    Environment Variables:	<none>
+  busybox:
+    Container ID:	docker://a3831df2aa83f55b90f0e54dbc75026d2d28721803e3e754f3c6f6076db53645
+    Image:		busybox:latest
+    Image ID:		docker://sha256:e02e811dd08fd49e7f6032625495118e63f597eb150403d02e3238af1df240ba
+    Port:
+    Command:
+      sh
+      -c
+      while : ; do sleep 10 ; done
+    State:		Running
+      Started:		Tue, 22 Nov 2016 16:26:33 +0800
+    Ready:		True
+    Restart Count:	0
+    Volume Mounts:
+      /mnt from htmlroot (rw)
+      /var/run/secrets/kubernetes.io/serviceaccount from default-token-k5azo (ro)
+    Environment Variables:	<none>
+Conditions:
+  Type		Status
+  Initialized 	True
+  Ready 	True
+  PodScheduled 	True
+Volumes:
+  htmlroot:
+    Type:	EmptyDir (a temporary directory that shares a pod's lifetime)
+    Medium:
+  default-token-k5azo:
+    Type:	Secret (a volume populated by a Secret)
+    SecretName:	default-token-k5azo
+QoS Class:	BestEffort
+Tolerations:	<none>
+Events:
+  FirstSeen	LastSeen	Count	From				SubobjectPath			Type		Reason		Message
+  ---------	--------	-----	----				-------------			--------	------		-------
+  1m		1m		1	{default-scheduler }						Normal		Scheduled	Successfully assigned multicontainer-pod to nodea0.example.com
+  1m		1m		1	{kubelet nodea0.example.com}	spec.containers{nginx}		Normal		Pulled		Container image "nginx:latest" already present on machine
+  1m		1m		1	{kubelet nodea0.example.com}	spec.containers{nginx}		Normal		Created		Created container with docker id 4ee4004da7e9; Security:[seccomp=unconfined]
+  1m		1m		1	{kubelet nodea0.example.com}	spec.containers{nginx}		Normal		Started		Started container with docker id 4ee4004da7e9
+  1m		1m		1	{kubelet nodea0.example.com}	spec.containers{busybox}	Normal		Pulled		Container image "busybox:latest" already present on machine
+  1m		1m		1	{kubelet nodea0.example.com}	spec.containers{busybox}	Normal		Created		Created container with docker id a3831df2aa83; Security:[seccomp=unconfined]
+  1m		1m		1	{kubelet nodea0.example.com}	spec.containers{busybox}	Normal		Started		Started container with docker id a3831df2aa83
+```
+
+我们可以通过kubectl exec 命令连接Pod中的容器，查看并测试共享卷。
+
+```shell
+# 连接multicontainer-pod中的busybox容器
+[root@master0 ~]# kubectl exec multicontainer-pod -c busybox -it /bin/sh
+
+# 使用df 查看磁盘挂接情况，请注意/mnt目录挂接情况
+/ # df
+Filesystem           1K-blocks      Used Available Use% Mounted on
+/dev/mapper/docker-253:0-669894-c8bc33b61e5399bfb777d2d306ce707322234fa8217c188bacc3389b0cc3dbef
+                      10474496     34672  10439824   0% /
+tmpfs                   508396         0    508396   0% /dev
+tmpfs                   508396         0    508396   0% /sys/fs/cgroup
+/dev/mapper/rhel-root
+                       9226240   4034764   5191476  44% /mnt
+/dev/mapper/rhel-root
+                       9226240   4034764   5191476  44% /dev/termination-log
+/dev/mapper/rhel-root
+                       9226240   4034764   5191476  44% /etc/resolv.conf
+/dev/mapper/rhel-root
+                       9226240   4034764   5191476  44% /etc/hostname
+/dev/mapper/rhel-root
+                       9226240   4034764   5191476  44% /etc/hosts
+shm                      65536         0     65536   0% /dev/shm
+tmpfs                   508396        12    508384   0% /var/run/secrets/kubernetes.io/serviceaccount
+tmpfs                   508396         0    508396   0% /proc/kcore
+tmpfs                   508396         0    508396   0% /proc/timer_list
+tmpfs                   508396         0    508396   0% /proc/timer_stats
+tmpfs                   508396         0    508396   0% /proc/sched_debug
+
+# 我们进入 /mnt 目录后创建 index.html文件，并写入测试字符串
+/ # cd /mnt
+/mnt # ls
+/mnt # echo "<h1>busybox</hi>" > index.html
+/mnt # exit
+```
+
+退出busybox容器，再连接nginx容器：
+
+```shell
+[root@master0 ~]# kubectl exec multicontainer-pod -c nginx -it /bin/sh
+# df
+Filesystem                                                                                       1K-blocks    Used Available Use% Mounted on
+/dev/mapper/docker-253:0-669894-985f5295e7838bcf7b60c163493cd010b1a5665a9ab46955ffdc6f7cadbf8f66  10474496  232540  10241956   3% /
+tmpfs                                                                                               508396       0    508396   0% /dev
+tmpfs                                                                                               508396       0    508396   0% /sys/fs/cgroup
+/dev/mapper/rhel-root                                                                              9226240 4035728   5190512  44% /etc/hosts
+shm                                                                                                  65536       0     65536   0% /dev/shm
+tmpfs                                                                                               508396      12    508384   1% /run/secrets/kubernetes.io/serviceaccount
+# cd /usr/share/nginx/html
+# ls
+index.html
+# cat index.html
+<h1>busybox</hi>
+# exit
+```
+
+可以看出多容器Pod中的nginx和busybox容器共享了一个存储卷。
+
+测试成功后，不要忘记做清除操作：
+
+```shell
+[root@master0 ~]# kubectl delete  -f multicontainer_pod.yaml
+pod "multicontainer-pod" deleted
 ```
 
 #### 创建简单Deployment
