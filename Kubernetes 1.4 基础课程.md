@@ -841,7 +841,7 @@ Session Affinity:	None
 
 在这里Kubernetes 1.4中有个Bug，本来我们是可以通过https://master0.example.com/ui访问Kubernetes UI的，但是由于代码的兼容问题，导致访问的时候会回显”Unauthorized“信息。
 
-## 创建 Kubernetes 服务
+## 管理 Kubernetes 集群服务
 
 ### 从简单的WEB服务入手学习
 
@@ -993,6 +993,7 @@ spec:
   containers:
   - name: nginx
     image: nginx:latest
+    imagePullPolicy: IfNotPresent
     ports:
     - containerPort: 80
 ```
@@ -1010,6 +1011,7 @@ spec:
   containers:
   - name: nginx
     image: nginx:latest
+    imagePullPolicy: IfNotPresent
     ports:
     - containerPort: 80
     
@@ -1165,6 +1167,7 @@ spec:
   containers:
   - name: nginx
     image: nginx:latest
+    imagePullPolicy: IfNotPresent
     ports:
     - containerPort: 80
 ```
@@ -1464,6 +1467,7 @@ spec:
       containers:
       - name: nginx
         image: nginx:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 80
 ```
@@ -1485,18 +1489,16 @@ NAME               DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
 nginx-deployment   2         2         2            0           13s
 ```
 
-同时又有两个新的Pod被创建出来：
+同时有两个新的Pod被创建出来：
 
 ```shell
 root@master0 ~]# kubectl get pod
 NAME                                READY     STATUS    RESTARTS   AGE
-nginx                               1/1       Running   1          7d
 nginx-deployment-2947857529-3dpz6   1/1       Running   0          25s
 nginx-deployment-2947857529-xt8gd   1/1       Running   0          25s
-web                                 1/1       Running   0          47m
 ```
 
-可以通过Label来分拣这两个新的Pod：
+如果你没有清除之前创建的Pod ，可以通过Label来分拣这两个新的Pod：
 
 ```shell
 [root@master0 ~]# kubectl get pod -l app=nginx
@@ -1515,26 +1517,23 @@ deployment "run-nginx" created
 查看Deployment信息：
 
 ```shell
-[root@master0 ~]# kubectl get deployment
+[root@master0 ~]# kubectl get deployment run-nginx
 NAME               DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
-nginx-deployment   2         2         2            2           54m
 run-nginx          2         2         2            2           55s
 ```
 
 查看创建的Pod信息：
 
 ```shell
-[root@master0 ~]# kubectl get pod
+[root@master0 ~]# kubectl get pod 
 NAME                                READY     STATUS    RESTARTS   AGE
-nginx                               1/1       Running   1          7d
-nginx-deployment-2947857529-3dpz6   1/1       Running   0          54m
-nginx-deployment-2947857529-xt8gd   1/1       Running   0          54m
+nginx-deployment-2947857529-3dpz6   1/1       Running   0          5m
+nginx-deployment-2947857529-xt8gd   1/1       Running   0          5m
 run-nginx-1357102973-02c4z          1/1       Running   0          1m
 run-nginx-1357102973-c7pkm          1/1       Running   0          1m
-web                                 1/1       Running   0          1h
 ```
 
-根据Label分拣Pod：
+也可以根据Label分拣Pod：
 
 ```shell
 [root@master0 ~]# kubectl get pod -l app=nginx-run
@@ -1576,7 +1575,7 @@ spec:
     spec:
       containers:
       - image: nginx:latest
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         name: run-nginx
         ports:
         - containerPort: 80
@@ -1601,9 +1600,8 @@ deployment "run-nginx" deleted
 [root@master0 ~]# kubectl create  -f nginx-run.yaml
 deployment "run-nginx" created
 
-[root@master0 ~]# kubectl get deployment
+[root@master0 ~]# kubectl get deployment run-ngix
 NAME               DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
-nginx-deployment   2         2         2            2           1h
 run-nginx          2         2         2            2           24s
 ```
 
@@ -1782,6 +1780,7 @@ spec:
       containers:
       - name: nginx
         image: nginx:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 80
 ---
@@ -2564,6 +2563,158 @@ index.html
 ```
 
 综上就是我们创建带共享存储卷的Service环境的方法。此方法解决了微服务中多副本存储共享问题。
+
+### 管理Pod的调度
+
+#### RC 和 Deployment 设置自动调度
+
+RC和Deployment设计的目的之一就是设置和管理Pod的多副本化，以及维持并监控Pod副本的数量。Kubernetes 集群通过RC和Deployment在集群内部始终维护用户指定的Pod副本数量。
+
+之前我们使用my-nginx.yaml创建过一个Pod副本数为2的基于nginx web 的服务，其配置文件内容如下：
+
+```yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  replicas: 2  # 指定副本数为 2 
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+spec:
+  ports:
+  - port: 8000
+    targetPort: 80
+    protocol: TCP
+  selector:
+    app: nginx
+  type: LoadBalancer
+```
+
+我们在此重新创建这个服务：
+
+```shell
+[root@master0 ~]# kubectl create -f my-nginx.yaml
+deployment "nginx-deployment" created
+service "nginx-service" created
+```
+
+Pod 运行在Kubernetes 现有的Node上，我们可以通过kubectl get nodes 命令查看当前Node 的信息：
+
+```shell
+[root@master0 ~]# kubectl get nodes
+NAME                  STATUS    AGE
+master0.example.com   Ready     23h
+nodea0.example.com    Ready     23h
+nodeb0.example.com    Ready     23h
+```
+
+其中，masterN为Kubernetes集群中的Master节点，nodeaN和nodebN为运行Pod资源的Node节点。
+
+我们可以通过命令kubectl get pod -o wide 来查看Pod分别运行在那些Node上：	
+
+```shell
+[root@master0 ~]# kubectl get pod -o wide
+NAME                                READY     STATUS    RESTARTS   AGE       IP          NODE
+nginx-deployment-2273492681-74lpo   1/1       Running   0          41m       10.46.0.4   nodeb0.example.com
+nginx-deployment-2273492681-zgnzx   1/1       Running   0          41m       10.40.0.1   nodea0.example.com
+```
+
+在我们不做任何额外设置时，Pod在RC和Deployment 管理下会自动分布到现有资源Node节点上，并且在Node节点损坏或离线状态下自动迁移到正常的节点上。我们可以模拟节点nodeb损坏，验证Pod迁移。
+
+```shell
+# 首先迫使nodebN 节点离线
+[kiosk@foundation0 ~]$ ssh root@nodeb0 "reboot"
+
+# 这时再查看Pod 信息
+# 发现 nodebN 失效后，在正常的节点上创建新的 Pod
+[root@master0 ~]# kubectl get pod -o wide
+NAME                                READY     STATUS              RESTARTS   AGE       IP          NODE
+nginx-deployment-2273492681-0bpic   0/1       ContainerCreating   0          16s       <none>      nodea0.example.com
+nginx-deployment-2273492681-d9md3   1/1       Running             0          7m        10.40.0.1   nodea0.example.com
+nginx-deployment-2273492681-g397i   1/1       Terminating         0          7m        10.46.0.4   nodeb0.example.com
+
+# 新Pod 运行正常后，删除失效的Pod
+[root@master0 ~]# kubectl get pod -o wide
+NAME                                READY     STATUS        RESTARTS   AGE       IP          NODE
+nginx-deployment-2273492681-0bpic   1/1       Running       0          22s       10.40.0.2   nodea0.example.com
+nginx-deployment-2273492681-d9md3   1/1       Running       0          7m        10.40.0.1   nodea0.example.com
+nginx-deployment-2273492681-g397i   1/1       Terminating   0          7m        10.46.0.4   nodeb0.example.com
+[root@master0 ~]# kubectl get pod -o wide
+NAME                                READY     STATUS    RESTARTS   AGE       IP          NODE
+nginx-deployment-2273492681-0bpic   1/1       Running   0          29s       10.40.0.2   nodea0.example.com
+nginx-deployment-2273492681-d9md3   1/1       Running   0          8m        10.40.0.1   nodea0.example.com
+
+# Node 正常恢复后并不将Pod资源切回
+[root@master0 ~]# kubectl get node
+NAME                  STATUS    AGE
+master0.example.com   Ready     1d
+nodea0.example.com    Ready     1d
+nodeb0.example.com    Ready     1d
+[root@master0 ~]# kubectl get pod -o wide
+NAME                                READY     STATUS    RESTARTS   AGE       IP          NODE
+nginx-deployment-2273492681-0bpic   1/1       Running   0          5m        10.40.0.2   nodea0.example.com
+nginx-deployment-2273492681-d9md3   1/1       Running   0          13m       10.40.0.1   nodea0.example.com
+```
+
+#### Pod 副本数扩容和缩减
+
+在生产环境中，我们经常会遇到由于负载的增大需要对某个服务进行扩容的场景，可以经常会遇到由于资源紧张需要将不太重要的或实际负载不高的服务进行缩减的场景。在Kubernetes 集群环境中，我们可以很方便的利用Pod的副本数来控制服务容量的增减。
+
+##### 手动增减Pod副本数
+
+我们在Kubernetes 集群运行状态下，可以使用kubectl scale 命令手动增减RC和Deployment中Pod的副本数。
+
+增加Deployment 中的副本数，演示如下：
+
+```shell
+# 当前 nginx-deployment 状态如下
+[root@master0 ~]# kubectl get deployment nginx-deployment
+NAME               DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+nginx-deployment   2         2         2            2           25m
+
+# 当前 pod 状态如下
+[root@master0 ~]# kubectl get pod
+NAME                                READY     STATUS    RESTARTS   AGE
+nginx-deployment-2273492681-0bpic   1/1       Running   0          18m
+nginx-deployment-2273492681-d9md3   1/1       Running   0          26m
+
+# 我们将nginx-deployment 中的pod 数由2设置为3
+[root@master0 ~]# kubectl scale --replicas=3 deployment nginx-deployment
+deployment "nginx-deployment" scaled
+
+# 增加副本数后的nginx-deployment 状态如下
+[root@master0 ~]# kubectl get deployment nginx-deployment
+NAME               DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+nginx-deployment   3         3         3            3           28m
+
+# 增加副本数后的 pod 状态如下
+[root@master0 ~]# kubectl get pod
+NAME                                READY     STATUS    RESTARTS   AGE
+nginx-deployment-2273492681-0bpic   1/1       Running   0          21m
+nginx-deployment-2273492681-d9md3   1/1       Running   0          28m
+nginx-deployment-2273492681-m3qcj   1/1       Running   0          58s
+```
+
+##### 自动增减Pod副本数
+
+除了手动通过kubectl scale 命令来增减Pod副本数之外，我们还可以使用在前面介绍过的概念Horizontal Pod Autoscaler（HPA）来根据容器占用的CPU使用率来自动进行增减Pod副本数。
+
+
 
 ## Kubernetes 对象配置文件结构
 
