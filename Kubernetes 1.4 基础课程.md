@@ -2708,15 +2708,277 @@ NAME                                READY     STATUS    RESTARTS   AGE
 nginx-deployment-2273492681-0bpic   1/1       Running   0          21m
 nginx-deployment-2273492681-d9md3   1/1       Running   0          28m
 nginx-deployment-2273492681-m3qcj   1/1       Running   0          58s
+
+# 为后续实验清理环境
+[root@master0 ~]# kubectl delete -f my-nginx.yaml
+deployment "nginx-deployment" deleted
+service "nginx-service" deleted
 ```
 
 ##### 自动增减Pod副本数
 
 除了手动通过kubectl scale 命令来增减Pod副本数之外，我们还可以使用在前面介绍过的概念Horizontal Pod Autoscaler（HPA）来根据容器占用的CPU使用率来自动进行增减Pod副本数。
 
+Horizontal Pod Autoscaler (HPA) 基于Master节点上的kube-controller-manager服务定义的监测时长（默认为30秒），周期性的检测Pod的CPU使用率，当满足预设条件时对RC或Deployment中的副本数进行调整。
+
+要使用HPA就需要预设Pod的CPU使用条件，同时还需要Kubernetes Heapster组件的支持，需要安装Heapster组件，否则无法获取Pod的CPU使用情况。
+
+首先我们需要装载Heapster运行容器的镜像到每个Node节点上：
+
+```shell
+# 在所有Node节点上下载heapster-img.tbz文件
+[kiosk@foundation0 Desktop]$ for i in nodea0 nodeb0 ; do ssh root@$i " wget http://classroom.example.com/materials/k8s-imgs/heapster-img.tbz" ; done
+
+# 然后将其解包
+[kiosk@foundation0 Desktop]$ for i in nodea0 nodeb0 ; do ssh root@$i "tar -jxf heapster-img.tbz " ; done
+
+# 然后将其导入
+[kiosk@foundation0 Desktop]$ for i in nodea0 nodeb0 ; do ssh root@$i 'for i in ./heapster/*.img ; do docker load -i $i ; done' ; done
+```
+
+在所有Node节点导入所需的heapster容器镜像后，需要在Master上运行Heapster脚本将其启动起来：
+
+```shell
+# 首先下载Heapster运行环境包到Master节点上
+[kiosk@foundation0 Desktop]$ ssh root@master0 "wget http://classroom.example.com/materials/k8s-conf/heapster.tar "
+
+# 然后将其解包
+[kiosk@foundation0 Desktop]$ ssh root@master0 "tar -xf heapster.tar "
+
+# 在Master节点上执行heapster目录下的kube.sh脚本
+[root@master0 heapster]# ./kube.sh
+
+# 耐心等待3~5分钟，可以看到相应的Pod运行起来
+[root@master0 heapster]# kubectl get pod --all-namespaces
+NAMESPACE     NAME                                          READY     STATUS    RESTARTS   AGE
+kube-system   etcd-master0.example.com                      1/1       Running   5          3d
+kube-system   heapster-3901806196-8c2rj                     1/1       Running   3          1d
+kube-system   kube-apiserver-master0.example.com            1/1       Running   10         3d
+kube-system   kube-controller-manager-master0.example.com   1/1       Running   5          3d
+kube-system   kube-discovery-982812725-nghjq                1/1       Running   5          3d
+kube-system   kube-dns-2247936740-f32d9                     3/3       Running   15         3d
+kube-system   kube-proxy-amd64-gzmv5                        1/1       Running   6          3d
+kube-system   kube-proxy-amd64-px2ms                        1/1       Running   3          1d
+kube-system   kube-proxy-amd64-tve1y                        1/1       Running   4          3d
+kube-system   kube-scheduler-master0.example.com            1/1       Running   5          3d
+kube-system   kubernetes-dashboard-1171352413-yuqpa         1/1       Running   3          2d
+kube-system   monitoring-grafana-927606581-45lpl            1/1       Running   3          1d
+kube-system   monitoring-influxdb-3276295126-ec2nf          1/1       Running   3          1d
+kube-system   weave-net-cfenz                               2/2       Running   15         3d
+kube-system   weave-net-kpvob                               2/2       Running   6          1d
+kube-system   weave-net-xblek                               2/2       Running   10         3d
+
+# 有三个服务正常运行
+[root@master0 ~]# kubectl get service heapster --namespace=kube-system
+NAME       CLUSTER-IP     EXTERNAL-IP   PORT(S)   AGE
+heapster   100.77.26.79   <none>        80/TCP    1d
+[root@master0 ~]# kubectl get service monitoring-grafana --namespace=kube-system
+NAME                 CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+monitoring-grafana   100.70.101.80   <nodes>       80/TCP    1d
+[root@master0 ~]# kubectl get service monitoring-influxdb --namespace=kube-system
+NAME                  CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE
+monitoring-influxdb   100.64.163.255   <none>        8086/TCP   1d
+```
+
+Kubernetes 的Heapster模块正常部署后，我们就可以做自动增减Pod副本数的实验了。
+
+首先在所有Node节点上部署hpa-example容器镜像，它是一个安装了apache和php的测试环境，我们在后面的试验中将访问其服务使其产生工作负载。
+
+```shell
+# 在所有Node节点上下载hpa-example-img.tbz包
+[kiosk@foundation0 Desktop]$ for i in nodea0 nodeb0 ; do ssh root@$i " wget http://classroom.example.com/materials/k8s-imgs/hpa-example-img.tbz" ; done
+
+# 然后将其解开
+[kiosk@foundation0 Desktop]$ for i in nodea0 nodeb0 ; do ssh root@$i "tar -jxf hpa-example-img.tbz " ; done
+
+# 然后将hpa-example容器镜像导入
+[kiosk@foundation0 Desktop]$ for i in nodea0 nodeb0 ; do ssh root@$i 'for i in ./hpa-example/*.img ; do docker load -i $i ; done' ; done
+Loaded image: kissingwolf/hpa-example:latest
+Loaded image: kissingwolf/hpa-example:latest
+
+# 如果你之前没有注意清除Node节点环境下载的文件，由于磁盘空间限制可能会导致无法导入，你可以执行以下命令，清除下载文件并提出磁盘空间
+[kiosk@foundation0 ~]$ for i in master0 nodea0 nodeb0 ; do ssh root@$i "rm -rf ~/*.tbz " ; done
+
+```
+
+接下来我们创建hpa-example.yaml配置文件，设置自动增减Pod副本数的Service环境：
+
+```yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: hpa-example-deployment
+spec:
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: hpa-example
+    spec:
+      containers:
+      - name: php-apache
+        image: kissingwolf/hpa-example:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: 200m
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hpa-example-service
+spec:
+  ports:
+  - port: 8000
+    targetPort: 80
+    protocol: TCP
+  selector:
+    app: hpa-example
+  type: LoadBalancer
+---
+apiVersion: autoscaling/v1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hpa-example-deployment
+spec:
+  maxReplicas: 10
+  minReplicas: 2
+  scaleTargetRef:
+    apiVersion: extensions/v1beta1
+    kind: Deployment
+    name: hpa-example-deployment
+  targetCPUUtilizationPercentage: 50
+```
+
+配置文件分为三个部分：Deployment、Service和HorizontalPodAutoscaler
+
+Depolyment部分说明：
+
+```yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: hpa-example-deployment
+spec:
+  replicas: 2 # 初始化副本数为2
+  template:
+    metadata:
+      labels:
+        app: hpa-example
+    spec:
+      containers:
+      - name: php-apache
+        image: kissingwolf/hpa-example:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+        resources: # spec.template.spce.containers[].resources 设置资源监控
+          requests: # 资源监控项目
+            cpu: 200m # CPU资源初始化限制，1 cpu core = 1000m ，200m = 0.2 cpu core
+```
+
+HorizontalPodAutoscaler部分说明：
+
+```yaml
+apiVersion: autoscaling/v1 # 配置版本
+kind: HorizontalPodAutoscaler # 配置类型
+metadata:
+  name: hpa-example-deployment
+spec:
+  maxReplicas: 10 # 设置最大副本数
+  minReplicas: 2 # 设置最小副本数
+  scaleTargetRef:
+    apiVersion: extensions/v1beta1
+    kind: Deployment
+    name: hpa-example-deployment # 配置的Deployment名称
+  targetCPUUtilizationPercentage: 50 # 设置Pod Cpu使用率维持在50%
+```
+
+通过kubectl create 命令创建此服务：
+
+```shell
+[root@master0 ~]# kubectl create -f hpa-example.yaml
+deployment "hpa-example-deployment" created
+service "hpa-example-service" created
+horizontalpodautoscaler "hpa-example-deployment" created
+```
+
+初始化状态可以通过 kubectl get hpa 命令查看：
+
+```shell
+[root@master0 ~]# kubectl get hpa
+NAME                     REFERENCE                           TARGET    CURRENT     MINPODS   MAXPODS   AGE
+hpa-example-deployment   Deployment/hpa-example-deployment   50%       <waiting>   2         10        47s
+# 需要等待1分钟左右才能收集好资源信息
+[root@master0 ~]# kubectl get hpa
+NAME                     REFERENCE                           TARGET    CURRENT   MINPODS   MAXPODS   AGE
+hpa-example-deployment   Deployment/hpa-example-deployment   50%       0%        2         10        2m
+```
+
+我们可以通过使用物理机foundationN发起请求，以增加负载的方式使Depolyment中的副本数自动增加：
+
+```shell
+# 首先确定hpa-example-service 对外暴露的端口(NodePort)
+[root@master0 ~]# kubectl describe service hpa-example-service
+Name:			hpa-example-service
+Namespace:		default
+Labels:			<none>
+Selector:		app=hpa-example
+Type:			LoadBalancer
+IP:			100.69.106.140
+Port:			<unset>	8000/TCP
+NodePort:		<unset>	32445/TCP
+Endpoints:		10.40.0.1:80,10.46.0.20:80
+Session Affinity:	None
+No events.
+
+# 在foundationN上执行如下命令产生负载，请注意MasterN为你自己的Master主机，访问端口为你即时查看到的端口
+[kiosk@foundation0 ~]$ while : ; do curl http://master0.example.com:32445 >/dev/null 2>&1 ; done
+
+# 初始化的Deployment状态如下：
+[root@master0 ~]# kubectl get deployment
+NAME                     DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+hpa-example-deployment   2         2         2            2           15m
+
+# 经过2分钟左右后Deployment状态如下
+[root@master0 ~]# kubectl get deployment
+NAME                     DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+hpa-example-deployment   6         6         6            6           18m
+
+# hpa 状态如下
+[root@master0 ~]# kubectl get hpa
+NAME                     REFERENCE                           TARGET    CURRENT   MINPODS   MAXPODS   AGE
+hpa-example-deployment   Deployment/hpa-example-deployment   50%       55%       2         10        19m
+
+# pod 状态如下
+[root@master0 ~]# kubectl get pod
+NAME                                     READY     STATUS    RESTARTS   AGE
+hpa-example-deployment-882509061-0vrl2   1/1       Running   0          36s
+hpa-example-deployment-882509061-5qrzz   1/1       Running   0          18m
+hpa-example-deployment-882509061-99a4s   1/1       Running   0          36s
+hpa-example-deployment-882509061-iw037   1/1       Running   0          36s
+hpa-example-deployment-882509061-vus9q   1/1       Running   0          36s
+hpa-example-deployment-882509061-zejct   1/1       Running   0          18m
+```
+
+如果我们停下foundationN上运行的运行的负载，则Deployment中的Pod数会自动减少。
+
+最后不要忘记清除环境：
+
+```shell
+[root@master0 ~]# kubectl delete -f hpa-example.yaml
+deployment "hpa-example-deployment" deleted
+service "hpa-example-service" deleted
+horizontalpodautoscaler "hpa-example-deployment" deleted
+```
+
+#### Pod 中容器的滚动升级
 
 
-## Kubernetes 对象配置文件结构
+
+
 
 
 
