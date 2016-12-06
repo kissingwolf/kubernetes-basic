@@ -2976,6 +2976,306 @@ horizontalpodautoscaler "hpa-example-deployment" deleted
 
 #### Pod 中容器的滚动升级
 
+当Kubernetes集群中的某个Service由于某种原因需要升级相关Pod中的容器镜像，我们会想当然的认为正确的操作步骤是先停止Service上的所有相关Pod，然后从镜像注册中心拉取新的镜像然后启动。在Kubernetes集群中Pod数量不多的情况下这样的操作没有问题，但是如果集群规模比较大，Pod的数量比较多，并且用户访问又是持续化的，这样的操作会带来灾难性的后果。你可以想象以下在大草原上，数以百万计的野牛狂奔向你的时候，你和你的同伴所有的武器都突然哑火的感觉吗？我们称这种情况叫做“惊群效应”。
+
+Kubernetes 是通过滚动升级（rolling-update）功能来解决这个问题的，RC方式中操作命令为 kubectl rolling-update，Deployment方式中操作命令为 kubectl set image 。
+
+##### RC 滚动升级
+
+RC 滚动升级功能通过将原有RC和升级RC置于同一Service和Namespace下，然后自动控制原有RC中的Pod副本数量逐渐减少直至为零，同时自动控制升级RC中的Pod副本数量从零逐渐增长至指定值。新旧RC中的Pod副本资源共享且均衡负载，有效的降低了惊群效应的发生。
+
+在前面的试验中，我们在Node上导入了nginx三个版本的镜像，之前使用的都是latest最新版本，在接下来的试验中，我们会首先创建一个使用低版本nginx镜像的Service ，然后使用配置文件更新这个Service的nginx镜像到高版本。
+
+创建旧有RC的配置文件命名为test-rollingupdate-v1.yaml，内容如下：
+
+```yaml
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: test-rollingupdate-v1
+  labels:
+    name: nginx
+    version: v1
+spec:
+  replicas: 4  # 我们设置Pod副本数为4
+  selector:
+    name: nginx
+    version: v1
+  template:
+    metadata:
+      labels:
+        name: nginx
+        version: v1
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.10.2 # nginx容器镜像版本为1.10.2
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+```
+
+使用配置文件生成RC：
+
+```shell
+[root@master0 ~]# kubectl create  -f test-rollingupdate-v1.yaml
+replicationcontroller "test-rollingupdate-v1" create
+```
+
+查看当前RC信息：
+
+```shell
+[root@master0 ~]# kubectl get rc
+NAME                    DESIRED   CURRENT   READY     AGE
+test-rollingupdate-v1   4         4         4         56s
+
+[root@master0 ~]# kubectl get pod
+NAME                          READY     STATUS    RESTARTS   AGE
+test-rollingupdate-v1-8nl1f   1/1       Running   0          1m
+test-rollingupdate-v1-8y5fx   1/1       Running   0          1m
+test-rollingupdate-v1-l6l03   1/1       Running   0          1m
+test-rollingupdate-v1-mk1cr   1/1       Running   0          1m
+
+[root@master0 ~]# kubectl describe replicationcontroller
+Name:		test-rollingupdate-v1
+Namespace:	default
+Image(s):	nginx:1.10.2
+Selector:	name=nginx,version=v1
+Labels:		name=nginx
+		version=v1
+Replicas:	4 current / 4 desired
+Pods Status:	4 Running / 0 Waiting / 0 Succeeded / 0 Failed
+No volumes.
+Events:
+  FirstSeen	LastSeen	Count	From				SubobjectPath	Type		Reason			Message
+  ---------	--------	-----	----				-------------	--------	------			-------
+  1m		1m		1	{replication-controller }		Normal		SuccessfulCreate	Created pod: test-rollingupdate-v1-mk1cr
+  1m		1m		1	{replication-controller }		Normal		SuccessfulCreate	Created pod: test-rollingupdate-v1-8y5fx
+  1m		1m		1	{replication-controller }		Normal		SuccessfulCreate	Created pod: test-rollingupdate-v1-l6l03
+  1m		1m		1	{replication-controller }		Normal		SuccessfulCreate	Created pod: test-rollingupdate-v1-8nl1f
+```
+
+创建新有RC的配置文件命名为test-rollingupdate-v2.yaml，内容如下：
+
+```yaml
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: test-rollingupdate-v2 # RC的名字不能与旧RC同名
+  labels:
+    name: nginx-rc
+    version: v2 # 用于与旧版本区分
+spec:
+  replicas: 2 # v2 版本的副本数可以与v1 不同
+  selector:
+    name: nginx
+    version: v2 # spec.selector中至少有一个Label不能与旧版本不同
+  template:
+    metadata:
+      labels:
+        name: nginx
+        version: v2 # 用于与旧版本区分
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.11.5 # nginx容器镜像版本升级为1.11.5
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+```
+
+使用kubectl rolling-update命令滚动升级test-rollingupdate-v1 RC：
+
+```shell
+[rootmaster0 ~]# kubectl rolling-update test-rollingupdate-v1 -f test-rollingupdate-v2.yaml
+Created test-rollingupdate-v2
+Scaling up test-rollingupdate-v2 from 0 to 2, scaling down test-rollingupdate-v1 from 4 to 0 (keep 2 pods available, don't exceed 3 pods)
+....
+此处根据副本个数决定切换时间和显示
+```
+
+同时打开另外一个终端，查看RC信息，可以看到v1和v2版本开始切换：
+
+```shell
+[root@master0 ~]# kubectl get rc
+NAME                    DESIRED   CURRENT   READY     AGE
+test-rollingupdate-v1   2         2         2         12m
+test-rollingupdate-v2   1         1         1         1m
+```
+
+在另一个终端中，查看replicationcontroller的详细信息，可以看到v1和v2版本具体操作信息：
+
+```shell
+[root@master0 ~]# kubectl describe replicationcontroller
+Name:		test-rollingupdate-v1
+Namespace:	default
+Image(s):	nginx:1.10.2
+Selector:	name=nginx,version=v1
+Labels:		name=nginx
+		version=v1
+Replicas:	1 current / 1 desired
+Pods Status:	1 Running / 0 Waiting / 0 Succeeded / 0 Failed
+No volumes.
+Events:
+  FirstSeen	LastSeen	Count	From				SubobjectPath	Type		Reason			Message
+  ---------	--------	-----	----				-------------	--------	------			-------
+  13m		13m		1	{replication-controller }		Normal		SuccessfulCreate	Created pod: test-rollingupdate-v1-mk1cr
+  13m		13m		1	{replication-controller }		Normal		SuccessfulCreate	Created pod: test-rollingupdate-v1-8y5fx
+  13m		13m		1	{replication-controller }		Normal		SuccessfulCreate	Created pod: test-rollingupdate-v1-l6l03
+  13m		13m		1	{replication-controller }		Normal		SuccessfulCreate	Created pod: test-rollingupdate-v1-8nl1f
+  1m		1m		1	{replication-controller }		Normal		SuccessfulDelete	Deleted pod: test-rollingupdate-v1-8y5fx
+  1m		1m		1	{replication-controller }		Normal		SuccessfulDelete	Deleted pod: test-rollingupdate-v1-8nl1f
+  7s		7s		1	{replication-controller }		Normal		SuccessfulDelete	Deleted pod: test-rollingupdate-v1-mk1cr
+
+
+Name:		test-rollingupdate-v2
+Namespace:	default
+Image(s):	nginx:1.11.5
+Selector:	name=nginx,version=v2
+Labels:		name=nginx-rc
+		version=v2
+Replicas:	2 current / 2 desired
+Pods Status:	2 Running / 0 Waiting / 0 Succeeded / 0 Failed
+No volumes.
+Events:
+  FirstSeen	LastSeen	Count	From				SubobjectPath	Type		Reason			Message
+  ---------	--------	-----	----				-------------	--------	------			-------
+  1m		1m		1	{replication-controller }		Normal		SuccessfulCreate	Created pod: test-rollingupdate-v2-6i9hm
+  7s		7s		1	{replication-controller }		Normal		SuccessfulCreate	Created pod: test-rollingupdate-v2-tf47l
+```
+
+等待一段时间后，v1中的Pod均切换为v2的Pod：
+
+```shell
+[root@master0 ~]# kubectl rolling-update test-rollingupdate-v1 -f test-rollingupdate-v2.yaml
+Created test-rollingupdate-v2
+Scaling up test-rollingupdate-v2 from 0 to 2, scaling down test-rollingupdate-v1 from 4 to 0 (keep 2 pods available, don't exceed 3 pods)
+Scaling test-rollingupdate-v1 down to 2
+Scaling test-rollingupdate-v2 up to 1
+Scaling test-rollingupdate-v1 down to 1
+Scaling test-rollingupdate-v2 up to 2
+Scaling test-rollingupdate-v1 down to 0
+Update succeeded. Deleting test-rollingupdate-v1
+replicationcontroller "test-rollingupdate-v1" rolling updated to "test-rollingupdate-v2"
+```
+
+滚动升级后，仅保留v2 版本的RC：
+
+```shell
+[root@master0 ~]# kubectl get rc
+NAME                    DESIRED   CURRENT   READY     AGE
+test-rollingupdate-v2   2         2         2         8m
+```
+
+查看replicationcontroller 具体信息也是一样：
+
+```shell
+[root@master0 ~]# kubectl describe replicationcontroller
+Name:		test-rollingupdate-v2
+Namespace:	default
+Image(s):	nginx:1.11.5
+Selector:	name=nginx,version=v2
+Labels:		name=nginx-rc
+		version=v2
+Replicas:	2 current / 2 desired
+Pods Status:	2 Running / 0 Waiting / 0 Succeeded / 0 Failed
+No volumes.
+Events:
+  FirstSeen	LastSeen	Count	From				SubobjectPath	Type		Reason			Message
+  ---------	--------	-----	----				-------------	--------	------			-------
+  9m		9m		1	{replication-controller }		Normal		SuccessfulCreate	Created pod: test-rollingupdate-v2-6i9hm
+  8m		8m		1	{replication-controller }		Normal		SuccessfulCreate	Created pod: test-rollingupdate-v2-tf47l
+```
+
+我们也可以不更新配置文件直接使用命令指定要滚动升级的nginx镜像，命令如下：
+
+```shell
+[root@master0 ~]# kubectl rolling-update test-rollingupdate-v1 --image=nginx:1.11.5
+```
+
+我们如果发现滚动升级后新版本的镜像有问题，还可以指定原有镜像回滚。
+
+```shell
+[root@master0 ~]# kubectl rolling-update test-rollingupdate-v1 --image=nginx:1.10.2 --rollback
+```
+
+##### Deployment 滚动升级
+
+Deployment 滚动升级比较简单，首先我们创建一个测试用的Deployment，配置文件命名为test-deployment-rollup.yaml ，内容如下：
+
+```yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  replicas: 4
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.10.2
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+```
+
+然后使用kubectl create 创建Deployment：
+
+```shell
+[root@master0 ~]# kubectl create -f  test-deployment-rollup.yaml
+deployment "nginx-deployment" created
+```
+
+通过查看Deployment的详细信息，可以获悉其默认使用RollingUpdate方式：
+
+```shell
+[root@master0 ~]# kubectl describe deployment
+Name:			nginx-deployment
+Namespace:		default
+CreationTimestamp:	Tue, 06 Dec 2016 16:29:01 +0800
+Labels:			app=nginx
+Selector:		app=nginx
+Replicas:		4 updated | 4 total | 4 available | 0 unavailable
+StrategyType:		RollingUpdate
+MinReadySeconds:	0
+RollingUpdateStrategy:	1 max unavailable, 1 max surge
+OldReplicaSets:		<none>
+NewReplicaSet:		nginx-deployment-2612444508 (4/4 replicas created)
+Events:
+  FirstSeen	LastSeen	Count	From				SubobjectPath	Type		Reason			Message
+  ---------	--------	-----	----				-------------	--------	------			-------
+  3m		3m		1	{deployment-controller }		Normal		ScalingReplicaSet	Scaled up replica set nginx-deployment-2612444508 to 4
+```
+
+我们只需要使用kubectl set image 命令就可以滚动升级其Pod容器镜像：
+
+```shell
+[root@master0 ~]# kubectl set image deployment/nginx-deployment nginx=nginx:1.11.5
+deployment "nginx-deployment" image updated
+```
+
+其中deployment/nginx-deployment 是deployment的名字，nginx=nginx:1.11.5 是容器名=容器镜像名及版本。
+
+滚动的方式也是将旧版本容器逐步停止，然后逐一生成新版本容器，但要比RC方式更快。
+
+```shell
+[root@master0 ~]# kubectl get pods
+NAME                                READY     STATUS              RESTARTS   AGE
+nginx-deployment-2612444508-xicfw   1/1       Running             0          6m
+nginx-deployment-2937634144-bnyuz   0/1       ContainerCreating   0          7s
+nginx-deployment-2937634144-eo6qb   0/1       ContainerCreating   0          9s
+nginx-deployment-2937634144-mvyjb   1/1       Running             0          17s
+nginx-deployment-2937634144-rzgcl   1/1       Running             0          17s
+```
+
+
+
+
+
 
 
 
