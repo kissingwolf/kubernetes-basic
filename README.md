@@ -1,3 +1,3 @@
 # Kubernetes-basic
 
-**Kubernetes 尚观基础课程** 
+**尚观Kubernetes  1.4 课程** 
