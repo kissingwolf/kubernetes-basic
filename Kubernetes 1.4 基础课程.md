@@ -372,7 +372,6 @@ Saving to: ‘/etc/yum.repos.d/k8s.repo’
      0K                                                       100% 33.8M=0s
 
 2016-10-27 23:33:25 (33.8 MB/s) - ‘/etc/yum.repos.d/k8s.repo’ saved [151/151]
-
 ```
 
 如果是公网线上环境，建议设置如下两个源：
