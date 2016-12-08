@@ -269,3 +269,406 @@ nodec0.example.com    Ready     10s
 0a349c.013fd0942f0c8498
 ```
 
+剔除Node 节点的操作在生产环境中使用相对较少，我们采取的剔除步骤是，首先将其隔离，然后使用kubectl delete node 命令将其删除。但是要注意的是，我们这样做的目的是使其离线后修复其硬件故障，故障修复后重新启动这个Node 节点，节点会重新自动加回集群。
+
+以下操作请注意将设备号设为你自己的设备号：
+
+```shell
+查看当前Node 节点状态
+[root@master0 ~]# kubectl get node
+NAME                  STATUS    AGE
+master0.example.com   Ready     15d
+nodea0.example.com    Ready     15d
+nodeb0.example.com    Ready     20h
+nodec0.example.com    Ready     18h
+
+将Node 节点 nodec0.example.com 隔离
+[root@master0 ~]# kubectl cordon nodec0.example.com
+node "nodec0.example.com" cordoned
+
+查看当前Node 节点状态
+[root@master0 ~]# kubectl get node
+NAME                  STATUS                     AGE
+master0.example.com   Ready                      15d
+nodea0.example.com    Ready                      15d
+nodeb0.example.com    Ready                      20h
+nodec0.example.com    Ready,SchedulingDisabled   18h
+
+删除Node 节点 nodec0.example.com
+[root@master0 ~]# kubectl delete node nodec0.example.com
+node "nodec0.example.com" deleted
+[root@master0 ~]# kubectl get node
+NAME                  STATUS    AGE
+master0.example.com   Ready     15d
+nodea0.example.com    Ready     15d
+nodeb0.example.com    Ready     20h
+
+重启Node 节点 nodec0.example.com
+[root@nodec0 ~]# reboot
+Connection to nodec0 closed by remote host.
+Connection to nodec0 closed.
+
+Node 节点 nodec0.example.com 重启后会自动加回集群
+[root@master0 ~]# kubectl get node
+NAME                  STATUS    AGE
+master0.example.com   Ready     15d
+nodea0.example.com    Ready     15d
+nodeb0.example.com    Ready     20h
+nodec0.example.com    Ready     41s
+```
+
+#### Node 节点信息说明
+
+我们有两种命令行获取Node 节点信息的方法： 
+
+* kubectl get node Node_Name -o Output_Format
+* kubectl describe node  Node_Name
+
+首先看get 子命令方法：
+
+```shell
+YAML 格式输出
+[root@master0 ~]# kubectl get node nodea0.example.com -o yaml
+apiVersion: v1
+kind: Node
+metadata:
+  annotations:
+    volumes.kubernetes.io/controller-managed-attach-detach: "true"
+  creationTimestamp: 2016-11-22T04:49:21Z
+  labels:
+    beta.kubernetes.io/arch: amd64
+    beta.kubernetes.io/os: linux
+    kubernetes.io/hostname: nodea0.example.com
+  name: nodea0.example.com
+  resourceVersion: "218660"
+  selfLink: /api/v1/nodes/nodea0.example.com
+  uid: 08a3d801-b06f-11e6-8ef8-52540000000a
+spec:
+  externalID: nodea0.example.com
+status:
+  addresses:
+  - address: 172.25.0.11
+    type: LegacyHostIP
+  - address: 172.25.0.11
+    type: InternalIP
+  allocatable:
+    alpha.kubernetes.io/nvidia-gpu: "0"
+    cpu: "2"
+    memory: 1016792Ki
+    pods: "110"
+  capacity:
+    alpha.kubernetes.io/nvidia-gpu: "0"
+    cpu: "2"
+    memory: 1016792Ki
+    pods: "110"
+  conditions:
+  - lastHeartbeatTime: 2016-12-08T03:28:08Z
+    lastTransitionTime: 2016-11-25T06:59:35Z
+    message: kubelet has sufficient disk space available
+    reason: KubeletHasSufficientDisk
+    status: "False"
+    type: OutOfDisk
+  - lastHeartbeatTime: 2016-12-08T03:28:08Z
+    lastTransitionTime: 2016-11-22T04:49:21Z
+    message: kubelet has sufficient memory available
+    reason: KubeletHasSufficientMemory
+    status: "False"
+    type: MemoryPressure
+  - lastHeartbeatTime: 2016-12-08T03:28:08Z
+    lastTransitionTime: 2016-11-22T04:49:21Z
+    message: kubelet has no disk pressure
+    reason: KubeletHasNoDiskPressure
+    status: "False"
+    type: DiskPressure
+  - lastHeartbeatTime: 2016-12-08T03:28:08Z
+    lastTransitionTime: 2016-11-22T04:49:21Z
+    message: kubelet is posting ready status
+    reason: KubeletReady
+    status: "True"
+    type: Ready
+  daemonEndpoints:
+    kubeletEndpoint:
+      Port: 10250
+  images:
+  - names:
+    - kubernetes/heapster:canary
+    sizeBytes: 1028534191
+  - names:
+    - kissingwolf/hpa-example:latest
+    sizeBytes: 480748530
+  - names:
+    - kubernetes/heapster_influxdb:v0.6
+    - kubernetes/heapster_influxdb@sha256:70b34b65def36fd0f54af570d5e72ac41c3c82e086dace9e6a977bab7750c147
+    sizeBytes: 271083718
+  - names:
+    - gcr.io/google_containers/kube-proxy-amd64:v1.4.0
+    sizeBytes: 202773136
+  - names:
+    - weaveworks/weave-kube:1.7.2
+    sizeBytes: 196546754
+  - names:
+    - nginx:1.11.5
+    - nginx:latest
+    sizeBytes: 181440028
+  - names:
+    - nginx:1.10.2
+    sizeBytes: 180664743
+  - names:
+    - gcr.io/google_containers/kubernetes-dashboard-amd64:v1.4.0
+    sizeBytes: 86267953
+  - names:
+    - weaveworks/weave-npc:1.7.2
+    sizeBytes: 76333700
+  - names:
+    - gcr.io/google_containers/pause-amd64:3.0
+    sizeBytes: 746888
+  nodeInfo:
+    architecture: amd64
+    bootID: 97cae03d-c66b-4719-b166-b2aad1ed02d5
+    containerRuntimeVersion: docker://1.12.2
+    kernelVersion: 3.10.0-327.el7.x86_64
+    kubeProxyVersion: v1.4.0
+    kubeletVersion: v1.4.0
+    machineID: ecd4a28875734de9bf2cb5e40cbf88da
+    operatingSystem: linux
+    osImage: Red Hat Enterprise Linux Server 7.2 (Maipo)
+    systemUUID: 9E450584-DC5A-4B7C-809E-25D67846B219
+
+JSON 格式输出
+[root@master0 ~]# kubectl get node nodea0.example.com -o json
+{
+    "kind": "Node",
+    "apiVersion": "v1",
+    "metadata": {
+        "name": "nodea0.example.com",
+        "selfLink": "/api/v1/nodes/nodea0.example.com",
+        "uid": "08a3d801-b06f-11e6-8ef8-52540000000a",
+        "resourceVersion": "218660",
+        "creationTimestamp": "2016-11-22T04:49:21Z",
+        "labels": {
+            "beta.kubernetes.io/arch": "amd64",
+            "beta.kubernetes.io/os": "linux",
+            "kubernetes.io/hostname": "nodea0.example.com"
+        },
+        "annotations": {
+            "volumes.kubernetes.io/controller-managed-attach-detach": "true"
+        }
+    },
+    "spec": {
+        "externalID": "nodea0.example.com"
+    },
+    "status": {
+        "capacity": {
+            "alpha.kubernetes.io/nvidia-gpu": "0",
+            "cpu": "2",
+            "memory": "1016792Ki",
+            "pods": "110"
+        },
+        "allocatable": {
+            "alpha.kubernetes.io/nvidia-gpu": "0",
+            "cpu": "2",
+            "memory": "1016792Ki",
+            "pods": "110"
+        },
+        "conditions": [
+            {
+                "type": "OutOfDisk",
+                "status": "False",
+                "lastHeartbeatTime": "2016-12-08T03:28:08Z",
+                "lastTransitionTime": "2016-11-25T06:59:35Z",
+                "reason": "KubeletHasSufficientDisk",
+                "message": "kubelet has sufficient disk space available"
+            },
+            {
+                "type": "MemoryPressure",
+                "status": "False",
+                "lastHeartbeatTime": "2016-12-08T03:28:08Z",
+                "lastTransitionTime": "2016-11-22T04:49:21Z",
+                "reason": "KubeletHasSufficientMemory",
+                "message": "kubelet has sufficient memory available"
+            },
+            {
+                "type": "DiskPressure",
+                "status": "False",
+                "lastHeartbeatTime": "2016-12-08T03:28:08Z",
+                "lastTransitionTime": "2016-11-22T04:49:21Z",
+                "reason": "KubeletHasNoDiskPressure",
+                "message": "kubelet has no disk pressure"
+            },
+            {
+                "type": "Ready",
+                "status": "True",
+                "lastHeartbeatTime": "2016-12-08T03:28:08Z",
+                "lastTransitionTime": "2016-11-22T04:49:21Z",
+                "reason": "KubeletReady",
+                "message": "kubelet is posting ready status"
+            }
+        ],
+        "addresses": [
+            {
+                "type": "LegacyHostIP",
+                "address": "172.25.0.11"
+            },
+            {
+                "type": "InternalIP",
+                "address": "172.25.0.11"
+            }
+        ],
+        "daemonEndpoints": {
+            "kubeletEndpoint": {
+                "Port": 10250
+            }
+        },
+        "nodeInfo": {
+            "machineID": "ecd4a28875734de9bf2cb5e40cbf88da",
+            "systemUUID": "9E450584-DC5A-4B7C-809E-25D67846B219",
+            "bootID": "97cae03d-c66b-4719-b166-b2aad1ed02d5",
+            "kernelVersion": "3.10.0-327.el7.x86_64",
+            "osImage": "Red Hat Enterprise Linux Server 7.2 (Maipo)",
+            "containerRuntimeVersion": "docker://1.12.2",
+            "kubeletVersion": "v1.4.0",
+            "kubeProxyVersion": "v1.4.0",
+            "operatingSystem": "linux",
+            "architecture": "amd64"
+        },
+        "images": [
+            {
+                "names": [
+                    "kubernetes/heapster:canary"
+                ],
+                "sizeBytes": 1028534191
+            },
+            {
+                "names": [
+                    "kissingwolf/hpa-example:latest"
+                ],
+                "sizeBytes": 480748530
+            },
+            {
+                "names": [
+                    "kubernetes/heapster_influxdb:v0.6",
+                    "kubernetes/heapster_influxdb@sha256:70b34b65def36fd0f54af570d5e72ac41c3c82e086dace9e6a977bab7750c147"
+                ],
+                "sizeBytes": 271083718
+            },
+            {
+                "names": [
+                    "gcr.io/google_containers/kube-proxy-amd64:v1.4.0"
+                ],
+                "sizeBytes": 202773136
+            },
+            {
+                "names": [
+                    "weaveworks/weave-kube:1.7.2"
+                ],
+                "sizeBytes": 196546754
+            },
+            {
+                "names": [
+                    "nginx:1.11.5",
+                    "nginx:latest"
+                ],
+                "sizeBytes": 181440028
+            },
+            {
+                "names": [
+                    "nginx:1.10.2"
+                ],
+                "sizeBytes": 180664743
+            },
+            {
+                "names": [
+                    "gcr.io/google_containers/kubernetes-dashboard-amd64:v1.4.0"
+                ],
+                "sizeBytes": 86267953
+            },
+            {
+                "names": [
+                    "weaveworks/weave-npc:1.7.2"
+                ],
+                "sizeBytes": 76333700
+            },
+            {
+                "names": [
+                    "gcr.io/google_containers/pause-amd64:3.0"
+                ],
+                "sizeBytes": 746888
+            }
+        ]
+    }
+}
+```
+
+接下来看describe 子命令方法：
+
+```shell
+[root@master0 ~]# kubectl describe node nodea0.example.com
+Name:			nodea0.example.com
+Labels:			beta.kubernetes.io/arch=amd64
+			beta.kubernetes.io/os=linux
+			kubernetes.io/hostname=nodea0.example.com
+Taints:			<none>
+CreationTimestamp:	Tue, 22 Nov 2016 12:49:21 +0800
+Phase:
+Conditions:
+  Type			Status	LastHeartbeatTime			LastTransitionTime			Reason				Message
+  ----			------	-----------------			------------------			------				-------
+  OutOfDisk 		False 	Thu, 08 Dec 2016 11:34:48 +0800 	Fri, 25 Nov 2016 14:59:35 +0800 	KubeletHasSufficientDisk 	kubelet has sufficient disk space available
+  MemoryPressure 	False 	Thu, 08 Dec 2016 11:34:48 +0800 	Tue, 22 Nov 2016 12:49:21 +0800 	KubeletHasSufficientMemory 	kubelet has sufficient memory available
+  DiskPressure 		False 	Thu, 08 Dec 2016 11:34:48 +0800 	Tue, 22 Nov 2016 12:49:21 +0800 	KubeletHasNoDiskPressure 	kubelet has no disk pressure
+  Ready 		True 	Thu, 08 Dec 2016 11:34:48 +0800 	Tue, 22 Nov 2016 12:49:21 +0800 	KubeletReady 			kubelet is posting ready status
+Addresses:		172.25.0.11,172.25.0.11
+Capacity:
+ alpha.kubernetes.io/nvidia-gpu:	0
+ cpu:					2
+ memory:				1016792Ki
+ pods:					110
+Allocatable:
+ alpha.kubernetes.io/nvidia-gpu:	0
+ cpu:					2
+ memory:				1016792Ki
+ pods:					110
+System Info:
+ Machine ID:			ecd4a28875734de9bf2cb5e40cbf88da
+ System UUID:			9E450584-DC5A-4B7C-809E-25D67846B219
+ Boot ID:			97cae03d-c66b-4719-b166-b2aad1ed02d5
+ Kernel Version:		3.10.0-327.el7.x86_64
+ OS Image:			Red Hat Enterprise Linux Server 7.2 (Maipo)
+ Operating System:		linux
+ Architecture:			amd64
+ Container Runtime Version:	docker://1.12.2
+ Kubelet Version:		v1.4.0
+ Kube-Proxy Version:		v1.4.0
+ExternalID:			nodea0.example.com
+Non-terminated Pods:		(6 in total)
+  Namespace			Name						CPU Requests	CPU Limits	Memory Requests	Memory Limits
+  ---------			----						------------	----------	---------------	-------------
+  kube-system			heapster-3901806196-8c2rj			0 (0%)		0 (0%)		0 (0%)		0 (0%)
+  kube-system			kube-proxy-amd64-ick75				0 (0%)		0 (0%)		0 (0%)		0 (0%)
+  kube-system			kubernetes-dashboard-1171352413-yuqpa		0 (0%)		0 (0%)		0 (0%)		0 (0%)
+  kube-system			monitoring-grafana-927606581-ruy2u		0 (0%)		0 (0%)		0 (0%)		0 (0%)
+  kube-system			monitoring-influxdb-3276295126-dmbtu		0 (0%)		0 (0%)		0 (0%)		0 (0%)
+  kube-system			weave-net-fphro					20m (1%)	0 (0%)		0 (0%)		0 (0%)
+Allocated resources:
+  (Total limits may be over 100 percent, i.e., overcommitted.
+  CPU Requests	CPU Limits	Memory Requests	Memory Limits
+  ------------	----------	---------------	-------------
+  20m (1%)	0 (0%)		0 (0%)		0 (0%)
+Events:
+  FirstSeen	LastSeen	Count	From				SubobjectPath	Type		Reason			Message
+  ---------	--------	-----	----				-------------	--------	------			-------
+  49m		49m		1	{kubelet nodea0.example.com}		Normal		Starting		Starting kubelet.
+  49m		48m		13	{kubelet nodea0.example.com}		Normal		NodeHasSufficientDisk	Node nodea0.example.com status is now: NodeHasSufficientDisk
+  49m		48m		13	{kubelet nodea0.example.com}		Normal		NodeHasSufficientMemory	Node nodea0.example.com status is now: NodeHasSufficientMemory
+  49m		48m		13	{kubelet nodea0.example.com}		Normal		NodeHasNoDiskPressure	Node nodea0.example.com status is now: NodeHasNoDiskPressure
+  48m		48m		1	{kubelet nodea0.example.com}		Warning		Rebooted		Node nodea0.example.com has been rebooted, boot id: 97cae03d-c66b-4719-b166-b2aad1ed02d5
+  47m		47m		1	{kube-proxy nodea0.example.com}		Normal		Starting		Starting kube-proxy.
+```
+
+Node 节点信息输出很清晰，很容易理解其意义。上课时我们会逐步介绍每部分的含义和作用。
+
+### Namespace 名字空间管理
+
+在Kubernetes 集群中，环境共享和隔离是通过Linux Namespace 名字空间管理来完成的。
+
+生产环境下，公司会有很多需要线上运行资源的部门，大公司会有电商事业部、网游事业部、手游事业部和门户事业部等等，小公司会有开发部、测试部和运维部等等，创业公司也会有开发测试组和安全运维支持组等等。不同的部门和工作组使用同一套Kubernetes 集群环境是最经济和环保的选择，但是如何做到不同部门和工作组之间互不干扰和睦相处呢？这时就需要在Kubernetes 集群中划分不同的运行隔离环境，将不同的部门和工作组限制在不同的隔离环境中，使其创建、修改和删除资源对象的操作相对独立，这样也有利于公司内部实现敏捷开发和敏捷部署，并减少由于部门间的误操作导致故障。
