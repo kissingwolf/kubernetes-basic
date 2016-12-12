@@ -5,6 +5,7 @@ rht-vmctl reset master
 rht-vmctl reset nodea
 rht-vmctl reset nodeb
 rht-vmctl reset nodec
+sleep 10
 for i in master$Foundation_Num nodea$Foundation_Num nodeb$Foundation_Num nodec$Foundation_Num ; do ssh root@$i "systemctl disable firewalld " ; done
 for i in master$Foundation_Num nodea$Foundation_Num nodeb$Foundation_Num nodec$Foundation_Num ; do ssh root@$i "systemctl stop firewalld " ; done
 for i in master$Foundation_Num nodea$Foundation_Num nodeb$Foundation_Num nodec$Foundation_Num ; do ssh root@$i "systemctl disable  NetworkManager " ; done
